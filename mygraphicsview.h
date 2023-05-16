@@ -25,6 +25,7 @@ signals:
 protected:
     void mousePressEvent(QMouseEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
+    void wheelEvent(QWheelEvent *event) override{}
 
 private:
 //    QVector<QPoint> polygonPoints;

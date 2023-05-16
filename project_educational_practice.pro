@@ -15,7 +15,6 @@ SOURCES += \
     mygraphicsview.cpp
 
 HEADERS += \
-    astar.h \
     mainwindow.h \
     mygraphicsview.h
 

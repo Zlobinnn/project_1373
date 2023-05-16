@@ -47,6 +47,8 @@ private slots:
 
     void onAction_3Triggered();
 
+    void wheelEvent(QWheelEvent *event) override{}
+
 private:
     Ui::MainWindow *ui;
 

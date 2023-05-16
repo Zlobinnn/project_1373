@@ -1,7 +1,6 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 #include "mygraphicsview.h"
-#include "astar.h"
 #include <QMouseEvent>
 #include <QWidget>
 #include <QGraphicsScene>
@@ -29,8 +28,16 @@
 #include <QGraphicsTextItem>
 #include <QPen>
 #include <QGraphicsDropShadowEffect>
+#include <iostream>
+#include <cmath>
+#include <list>
+#include <vector>
+#include <algorithm>
+#include <QLabel>
 
 MyGraphicsView *view;
+int row = 500;
+int col = 690;
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -42,10 +49,6 @@ MainWindow::MainWindow(QWidget *parent)
     view = new MyGraphicsView;
     view->setMouseTracking(true);
     view->setScene(new QGraphicsScene);
-    view->setRenderHint(QPainter::Antialiasing);
-    view->setAlignment(Qt::AlignLeft | Qt::AlignTop);
-    view->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-    view->setMinimumSize(800, 600);
 
     ui->verticalLayout->addWidget(view);
 
@@ -53,17 +56,12 @@ MainWindow::MainWindow(QWidget *parent)
     connect(view, &MyGraphicsView::mousePress, this, &MainWindow::on_mousePress);
 
     // Запретить автоматическое изменение масштаба
+    view->setRenderHint(QPainter::Antialiasing);
+    view->setAlignment(Qt::AlignLeft | Qt::AlignTop);
     view->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-    view->setSceneRect(0, 0, 800, 600);
-    view->setMinimumSize(800, 600);
-    view->setMaximumSize(800, 600);
+    view->setSceneRect(0, 0, 690, 500);
     view->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     view->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-
-        //connect(view, &MyGraphicsView::mousePress, this, &MainWindow::on_mousePress);
-//            connect(ui->createPolygonButton, &QPushButton::clicked, graphicsView, &MyGraphicsView::createPolygon);
-//            connect(ui->clearPolygonButton, &QPushButton::clicked, graphicsView, &MyGraphicsView::clearPolygon);
-
 
     turn_off_flags();
 
@@ -108,11 +106,11 @@ void saveFiguresToXml(const QString& filePath, QGraphicsScene* scene)
                 QGraphicsPolygonItem*tmp = view->polygons[i];
                 writer.writeTextElement("penetration",QString::number((view->polygonsPatency.value(tmp))));
                 qDebug() << view->polygonsPatency;
-                writer.writeEndElement(); // end of vertexes
-                writer.writeEndElement(); // end of figure
+                writer.writeEndElement();
+                writer.writeEndElement();
             }
-            writer.writeEndElement(); // end of item
-            writer.writeEndElement(); // end of scene
+            writer.writeEndElement();
+            writer.writeEndElement();
             writer.writeEndDocument();
             file.close();
 }
@@ -127,21 +125,30 @@ void saveSceneToXml(const QString& filePath, QGraphicsScene* scene)
             writer.setAutoFormatting(true);
             writer.writeStartDocument();
             writer.writeStartElement("scene");
-
+            int pixels = 0;
+            qDebug()<<view->scene()->items().count();
             for (QGraphicsItem *item : view->scene()->items()) {
                     if (item==view->start) {
                         writer.writeStartElement("start");
-                        writer.writeAttribute("x",QString::number(item->scenePos().x()));
-                        writer.writeAttribute("y",QString::number(item->scenePos().y()));
+                        writer.writeAttribute("x",QString::number(item->scenePos().x()+12));
+                        writer.writeAttribute("y",QString::number(item->scenePos().y()+22));
                         writer.writeEndElement();
                     }
                     if (item==view->finish) {
                         writer.writeStartElement("finish");
-                        writer.writeAttribute("x",QString::number(item->scenePos().x()));
-                        writer.writeAttribute("y",QString::number(item->scenePos().y()));
+                        writer.writeAttribute("x",QString::number(item->scenePos().x()+12));
+                        writer.writeAttribute("y",QString::number(item->scenePos().y()+22));
                         writer.writeEndElement();
                     }
+                    if (item->type() == QGraphicsEllipseItem::Type) {
+                        pixels++;
+                    }
             }
+            writer.writeStartElement("route");
+            writer.writeTextElement("distace",QString::number(pixels));
+            writer.writeTextElement("speed",QString::number(5));
+            writer.writeTextElement("time",QString::number(pixels/5));
+            writer.writeEndElement();
             writer.writeStartElement("figures");
             for (int i = 0; i < view->polygonPoints.size(); ++i) {
                 writer.writeStartElement("figure");
@@ -156,11 +163,11 @@ void saveSceneToXml(const QString& filePath, QGraphicsScene* scene)
                 QGraphicsPolygonItem*tmp = view->polygons[i];
                 writer.writeTextElement("penetration",QString::number((view->polygonsPatency[tmp])));
 
-                writer.writeEndElement(); // end of vertexes
-                writer.writeEndElement(); // end of figure
+                writer.writeEndElement();
+                writer.writeEndElement();
             }
-            writer.writeEndElement(); // end of figures
-            writer.writeEndDocument();// end of scene
+            writer.writeEndElement();
+            writer.writeEndDocument();
             file.close();
 }
 
@@ -171,6 +178,9 @@ void readScene(const QString& filePath, QGraphicsScene* scene)
     view->polygonsPatency.clear();
     view->polygons.clear();
     view->polygonsTexts.clear();
+    view->start = nullptr;
+    view->finish = nullptr;
+
     QFile file(filePath);
         if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
             return;
@@ -210,25 +220,23 @@ void readScene(const QString& filePath, QGraphicsScene* scene)
         file.close();
 
     for(int i = 0; i < view->polygonPoints.size(); ++i) {
-        //QPolygon polygon(view->polygonPoints[i]);
         QGraphicsPolygonItem* polygonItem = view->polygons[i];
         float color = view->polygonsPatency.value(view->polygons[i]);
         polygonItem->setPen(QPen(Qt::black, 1));
         polygonItem->setBrush(QBrush(QColor::fromRgbF(color,color,color)));
-        //view->polygons[i] = polygonItem;
         QGraphicsTextItem* textItem = new QGraphicsTextItem(QString::number(color * 100) + "%");
         view->polygonsTexts<<textItem;
         textItem->setParentItem(polygonItem);
         textItem->setDefaultTextColor(Qt::white);
-        textItem->setFont(QFont("Arial", 14, QFont::Bold));
+        textItem->setFont(QFont("Arial", 14));
         textItem->setOpacity(1);
         QGraphicsDropShadowEffect* textShadow = new QGraphicsDropShadowEffect();
-        textShadow->setBlurRadius(7);
-        textShadow->setColor(QColor("black"));
-        textShadow->setOffset(0,0);
+        textShadow->setBlurRadius(3);
+        textShadow->setColor(Qt::black);
+        textShadow->setOffset(1,1);
         textItem->setGraphicsEffect(textShadow);
         QRectF textRect = textItem->boundingRect();
-        textItem->setPos(polygonItem->boundingRect().center().x() - textRect.width() / 2.0, polygonItem->boundingRect().center().y() - textRect.height() / 2.0);
+        textItem->setPos(polygonItem->boundingRect().center() - textItem->boundingRect().center());
         view->scene()->addItem(polygonItem);
         view->scene()->update();
         qDebug()<<view->scene()->items().count();
@@ -304,13 +312,23 @@ void MainWindow::on_add_but_clicked()
         slider->setTickInterval(10);
         slider->setTickPosition(QSlider::TicksBelow);
         ui->verticalLayout_2->addWidget(slider);
+
+        //Создаём объекты типа QLabel (тексты) в нашем приложении
+        QLabel *label = new QLabel("Выберите коэффициент проходимости");
+        QLabel *label2 = new QLabel("0%");
+        QLabel *label3 = new QLabel("100%");
+
+        // Добавляем виджеты
+        ui->gridLayout_2->addWidget(label,0,1,Qt::AlignCenter);
+        ui->gridLayout_2->addWidget(label2,0,0,Qt::AlignLeft);
+        ui->gridLayout_2->addWidget(label3,0,2,Qt::AlignRight);
+
     }
     else{
         add_but_is_clicked = false;
 
         QSlider* slider = findChild<QSlider*>();
 
-        //if(view->polygons.size()==0 || ((view->polygons.size()>0)&&(view->polygons[view->polygons.size()-1]!=nullptr))){
         //Проверяем, является ли последний полигон в массиве пустым
         if(((view->polygons.size()>0)&&(view->polygons[view->polygons.size()-1]!=nullptr))){
             //Получаем значение из ползунка
@@ -359,6 +377,12 @@ void MainWindow::on_add_but_clicked()
         ui->verticalLayout_2->removeWidget(slider);
         delete slider;
 
+        //Удаляем тексты с приложения
+        for (int i=0;i<3;i++){
+            QLabel *label = findChild<QLabel*>();
+            delete label;
+        }
+
         //Меняем текст кнопки на "Добавить"
         QPushButton* myButton = findChild<QPushButton*>("add_but");
         myButton->setText("Добавить");
@@ -385,65 +409,10 @@ void MainWindow::on_delete_but_clicked()
         turn_off_flags();
         delete_but_is_clicked = true;
 
-        //saveSceneToXml("my_graphics_view.xml",view->scene());
-
         QPushButton* delete_but = findChild<QPushButton*>("delete_but");
         delete_but->setStyleSheet("border: 1px solid blue;");
     }
 }
-
-void MainWindow::on_way_but_clicked()
-{
-
-    if (!add_but_is_clicked){
-        turn_off_flags();
-        way_but_is_clicked = true;
-
-        /*float A[800][600];
-        int count = 0;
-        for (int i=0;i<800;i++){
-            for (int k=0;k<600;k++){
-                A[i][k] = 1;
-                for (QGraphicsItem *item : view->scene()->items()) {
-                    if (item->type() == QGraphicsPolygonItem::Type && item->contains(QPoint(i, k))) {
-                        count++;
-                        QGraphicsPolygonItem *polygonItem = qgraphicsitem_cast<QGraphicsPolygonItem *>(item);
-                        if (view->polygonsPatency.value(polygonItem) != 0){
-                            //qDebug() << 1 / view->polygonsPatency.value(polygonItem);
-                        }
-                        else{
-                            //qDebug() << 10000000;
-                        }
-                    }
-                }
-            }
-        }
-        //qDebug << A;
-        QRectF sceneRect = view->sceneRect();
-
-        // Переводим координаты (0,0) в QGraphicsView в координаты на QGraphicsScene
-        QPointF scenePos = view->mapToScene(0, 0);
-        qDebug() << "Scene rect:" << sceneRect << " Scene position:" << scenePos;
-
-        for (int i=0;i < qRound(view->scene()->width());i++){
-            for (int k=0;k < qRound(view->scene()->height());k++){
-                for (const auto& item : view->scene()->items()) {
-                    if (item->type() == QGraphicsPolygonItem::Type && item->contains(QPoint(i, k))) {
-                        count++;
-                    }
-                }
-            }
-        }
-        qDebug() << count;
-        qDebug() << qRound(view->scene()->width());
-        qDebug() << qRound(view->scene()->height());*/
-        Astar astar;
-        Node *startPos = new Node(view->start->scenePos().x(),view->start->scenePos().y());
-        Node *endPos = new Node(view->finish->scenePos().x(),view->finish->scenePos().y());
-        astar.search(startPos, endPos);
-    }
-}
-
 
 void MainWindow::on_start_but_clicked()
 {
@@ -472,9 +441,17 @@ void MainWindow::on_finish_but_clicked()
 
 void MainWindow::on_mousePress(QMouseEvent *event)
 {
-    qDebug() << view->polygons.size() << view->polygons;
-    qDebug() << view->polygonPoints.size() << view->polygonPoints;
-    qDebug() << view->polygonsPatency.size() << view->polygonsPatency;
+    //Очищаем маршрут
+    if (!way_but_is_clicked){
+        for (QGraphicsItem *item : view->scene()->items()) {
+                 if (item->type() == QGraphicsEllipseItem::Type) {
+                        view->scene()->removeItem(item);
+                 }
+        }
+        qDebug() << view->polygons.size() << view->polygons;
+        qDebug() << view->polygonPoints.size() << view->polygonPoints;
+        qDebug() << view->polygonsPatency.size() << view->polygonsPatency;
+    }
 
     //Обрабатываем действия при нажатой кнопке старта
     if(start_but_is_clicked){
@@ -496,14 +473,16 @@ void MainWindow::on_mousePress(QMouseEvent *event)
                 QGraphicsPixmapItem *item = new QGraphicsPixmapItem(pixmap);
                 view->start = item;
                 item->setScale(0.05);
-                //item->setPos(point.x()-12, point.y()-22);
-                item->setPos(point.x(), point.y());
+                item->setPos(point.x()-12, point.y()-22);
                 item->setZValue(1);
+
                 view->scene()->addItem(item);
+                qDebug() << item->scenePos();
+
                 qDebug() << item->scenePos();
             }
             else{
-                view->start->setPos(point.x(), point.y());
+                view->start->setPos(point.x()-12, point.y()-22);
             }
             qDebug() << view->scene()->items();
             qDebug() << view->start->scenePos().x();
@@ -533,12 +512,12 @@ void MainWindow::on_mousePress(QMouseEvent *event)
                 QGraphicsPixmapItem *item = new QGraphicsPixmapItem(pixmap);
                 view->finish = item;
                 item->setScale(0.05);
-                item->setPos(point.x(), point.y());
+                item->setPos(point.x()-12, point.y()-22);
                 item->setZValue(1);
                 view->scene()->addItem(item);
             }
             else{
-                view->finish->setPos(point.x(), point.y());
+                view->finish->setPos(point.x()-12, point.y()-22);
             }
             qDebug() << view->scene()->items();
         }
@@ -549,35 +528,6 @@ void MainWindow::on_mousePress(QMouseEvent *event)
 
     //Обрабатываем действия при нажатой кнопке "Добавить"
     if ((event->button() == Qt::LeftButton)&&(add_but_is_clicked)) {
-            /*if (view) {
-                view->polygonPoints[view->polygonPoints.size()-1] << event->pos();
-                view->scene()->update();
-                qDebug() << view->scene()->items();
-            }
-
-            QPolygonF polygon;
-            polygon << QPointF(0, 0) << QPointF(100, 0) << QPointF(100, 100) << QPointF(0, 100);  // координаты вершин полигона
-
-            QGraphicsPolygonItem* polygonItem = new QGraphicsPolygonItem(polygon);
-            polygonItem->setPen(QPen(Qt::black, 2));  // устанавливаем цвет ручки
-            polygonItem->setBrush(QBrush(Qt::gray));  // устанавливаем цвет заливки
-
-            view->scene()->addItem(polygonItem);*/
-        /*QVector<QPoint> newPoints = view->polygonPoints[view->polygonPoints.size()-1];
-        newPoints << event->pos();
-        QPolygon polygon(newPoints);
-        QGraphicsPolygonItem* polygonItem = new QGraphicsPolygonItem(polygon);
-        QPainterPath path1 = polygonItem->shape();
-        QPainterPath path2;*/
-
-//        bool isPolygonClicked = false;
-//        for (QGraphicsItem *item : view->scene()->items()) {
-//                if (item->type() == QGraphicsPolygonItem::Type && item->contains(event->pos())) {
-//                    isPolygonClicked = true;
-//                    break;
-//                }
-//        }
-
         view->polygonPoints[view->polygonPoints.size()-1] << event->pos();
 
         QList<QGraphicsItem*> items = view->scene()->items();
@@ -591,8 +541,8 @@ void MainWindow::on_mousePress(QMouseEvent *event)
 
         QPolygon polygon(view->polygonPoints[view->polygonPoints.size()-1]);
         QGraphicsPolygonItem* polygonItem = new QGraphicsPolygonItem(polygon);
-        polygonItem->setPen(QPen(Qt::black, 1));  // устанавливаем цвет ручки
-        polygonItem->setBrush(QBrush(Qt::gray));  // устанавливаем цвет заливки
+        polygonItem->setPen(QPen(Qt::black, 1));
+        polygonItem->setBrush(QBrush(Qt::gray));
         view->polygons[view->polygons.size()-1] = polygonItem;
         qDebug() << "polygons: " << view->polygons;
 
@@ -607,6 +557,8 @@ void MainWindow::on_mousePress(QMouseEvent *event)
 
         QPainterPath path1 = polygonItem->shape();
         QPainterPath path2;
+
+        //Проверяем, не соприкасаются ли полигоны
         for (QGraphicsItem *item : view->scene()->items()) {
             path2 = item->shape();
                 if ((item->type() == QGraphicsPolygonItem::Type && item->contains(event->pos())&&item!=polygonItem)||(item->type() == QGraphicsPolygonItem::Type && item!=polygonItem && path1.intersects(path2))) {
@@ -615,8 +567,8 @@ void MainWindow::on_mousePress(QMouseEvent *event)
                     view->polygonPoints[view->polygonPoints.size()-1].removeAt(view->polygonPoints[view->polygonPoints.size()-1].size()-1);
                     QPolygon polygon(view->polygonPoints[view->polygonPoints.size()-1]);
                     QGraphicsPolygonItem* polygonItem = new QGraphicsPolygonItem(polygon);
-                    polygonItem->setPen(QPen(Qt::black, 1));  // устанавливаем цвет ручки
-                    polygonItem->setBrush(QBrush(Qt::gray));  // устанавливаем цвет заливки
+                    polygonItem->setPen(QPen(Qt::black, 1));
+                    polygonItem->setBrush(QBrush(Qt::gray));
                     view->polygons[view->polygons.size()-1] = polygonItem;
 
                     view->scene()->addItem(polygonItem);
@@ -624,29 +576,13 @@ void MainWindow::on_mousePress(QMouseEvent *event)
                     break;
                 }
         }
+    }
 
-
-        /*
-        // Удалите старый полигон из сцены
-                if (polygonItem) {
-                    QList<QGraphicsItem*> items = view->scene()->items(Qt::SortOrder(), Qt::CoarseGrainingMode::CoarseGrainingPixmap);
-
-                    view->scene()->removeItem();
-                    delete polygonItem;
-                    polygonItem = nullptr;
-                }
-
-                // Создайте новый полигон и добавьте его в сцену
-                polygonItem = new QGraphicsPolygonItem(polygon);
-                polygonItem->setPen(QPen(Qt::black, 2));
-                polygonItem->setBrush(QBrush(Qt::gray));
-                scene()->addItem(polygonItem);*/
-
-        }
+    //Обрабатываем удаление
     if(delete_but_is_clicked){
+        //Смотрим, попал ли клик по полигону
            for (QGraphicsItem *item : view->scene()->items()) {
                     if (item->type() == QGraphicsPolygonItem::Type && item->contains(event->pos())) {
-                        // обработка клика по полигону
                         for (int i=0;i < view->polygonPoints.size();i++){
                             for(QPoint point : view->polygonPoints[i]){
                                 if (item->contains(point)){
@@ -656,7 +592,6 @@ void MainWindow::on_mousePress(QMouseEvent *event)
                                     view->polygonsTexts.removeAt(i);
                                     delete text;
                                     qDebug() << "view->polygonsTexts" << view->polygonsTexts;
-
 
                                     QGraphicsPolygonItem *polygonItem = qgraphicsitem_cast<QGraphicsPolygonItem *>(item);
                                     qDebug() << polygonItem;
@@ -671,7 +606,6 @@ void MainWindow::on_mousePress(QMouseEvent *event)
                         view->polygons.removeAll(polygonItem);
                         view->polygonsPatency.remove(polygonItem);
                         delete polygonItem;
-                        // ...
                     }
             }
 
@@ -680,187 +614,242 @@ void MainWindow::on_mousePress(QMouseEvent *event)
 }
 
 void MainWindow::onActionTriggered(){
+    //Обрабатываем нажатие на кнопку "Сохранить маршрут"
     if (way_but_is_clicked){
-//        saveFiguresToXml("my.xml",view->scene());
-//        readScene("my.xml",view->scene());
-//        qDebug() << "saved and readed";
-
+        saveSceneToXml("scene.xml",view->scene());
     }
     else{
-        QMessageBox::critical(this, tr("Ошибка"), tr("Для сохранения маршрута сначало необходимо его построить!"));
+        QMessageBox::critical(this, tr("Ошибка"), tr("Для сохранения маршрута сначала необходимо его построить!"));
     }
 }
 
 void MainWindow::onAction_2Triggered(){
+    //Обрабатываем нажатие на кнопку "Сохранить карту препятствий"
     saveFiguresToXml("my.xml",view->scene());
     qDebug() << view->scene()->items();
 }
 
 void MainWindow::onAction_3Triggered(){
+    //Обрабатываем нажатие на кнопку "Загрузить карту препятствий"
     readScene("my.xml",view->scene());
 }
 
-const int row = 800;
-const int col = 600;
-
-std::vector < std::vector <float> > Matrix(row, std::vector <float> (col, 1) ); // complete matrix of '1'
-
-// complete matrix with
-void CompletePoint()
+class Vector2
 {
-    for (int i=0;i<row;i++){
-            for (int k=0;k<col;k++){
-                for (QGraphicsItem *item : view->scene()->items()) {
-                    if (item->type() == QGraphicsPolygonItem::Type && item->contains(QPoint(i, k))) {
-                        QGraphicsPolygonItem *polygonItem = qgraphicsitem_cast<QGraphicsPolygonItem *>(item);
-                            if (view->polygonsPatency.value(polygonItem) != 0)
-                            {
-                                Matrix[i][k] = 1 / view->polygonsPatency.value(polygonItem);
-                            }
-                            else
-                            {
-                                Matrix[i][k] = 1000;
+    int x, y;
+public:
+    Vector2(int _x, int _y) : x(_x), y(_y) {}
+    Vector2() = default;
+    Vector2 operator +(const Vector2& other) {
+        Vector2 temp;
+        temp.x = this->x + other.x;
+        temp.y = this->y + other.y;
+        return temp;
+    }
+    int getX() const { return x; }
+    int getY() const { return y; }
+
+    friend class Map;
+};
+
+class Map
+{
+    int size;
+public:
+    friend struct Node;
+    std::vector<float> data;
+    Map() = default;
+    Map(int _size) : size(_size) {
+        data.resize(size);
+        for (int i = 0; i < size; ++i) data[i] = 1;
+    }
+    void display() const {
+        for (int i = 1; i <= size; ++i) {
+        }
+    }
+    bool getIfInDanger(Vector2 position) const {
+        if (position.y < 0) position.y = 0;
+        if (position.x < 0) position.x = 0;
+        if (position.y >= row) position.y = row - 1;
+        if (position.x >= col) position.x = col - 1;
+        return(data[position.getX() + (position.getY() * col)] == 0);
+    }
+    void setElement(float&& asda, Vector2 position) {
+        data[position.getX() + (position.getY() * col)] = asda;
+    }
+};
+
+struct Node
+{
+    Vector2 position;
+    float G, H, F;
+    Node* parent = nullptr;
+
+    Node() = default;
+    Node(const Node& other) = default;
+    Node(Vector2 pos) :position(pos) {};
+
+    void calc(const Vector2& endPos, class Map& map) {
+        H = static_cast<int>((abs(static_cast<double>(position.getX() - endPos.getX())) + abs(static_cast<double>(position.getY() - endPos.getY()))));
+        G = parent ? parent->G + 1 : 1;
+
+        F = G + H;
+        F /= map.data[position.getX() + position.getY()*col];
+    }
+
+    bool operator==(const Node& other) const {
+        return (position.getX() == other.position.getX() && position.getY() == other.position.getY());
+    }
+    bool operator!=(const Node& other) const {
+        return !(*this == other);
+    }
+    bool operator<(const Node& other)  const {
+        return(F < other.F);
+    }
+};
+
+class Solver
+{
+    Vector2 startPos, endPos;
+    std::vector<Vector2> directions;
+    Map map;
+public:
+    Solver(Vector2 _startPos, Vector2 _endPos, int size) : startPos(_startPos), endPos(_endPos) {
+        Map temp(size);
+        map = temp;
+
+
+        for (int i=0;i<row;i++){
+                for (int k=0;k<col;k++){
+                    for (QGraphicsItem *item : view->scene()->items()) {
+                        if (item->type() == QGraphicsPolygonItem::Type && item->contains(QPoint(i, k))) {
+                            QGraphicsPolygonItem *polygonItem = qgraphicsitem_cast<QGraphicsPolygonItem *>(item);
+                                if (view->polygonsPatency.value(polygonItem) != 0)
+                                {
+                                    map.setElement(view->polygonsPatency.value(polygonItem), Vector2(i, k));
+                                    //qDebug() << view->polygonsPatency.value(polygonItem);
+                                }
+                                else
+                                {
+                                    map.setElement(0, Vector2(i, k));
+                                }
                             }
                         }
-                    }
+                }
+        }
+
+        // направления движения
+        directions.resize(8);
+        directions[0] = Vector2(-1, 1);
+        directions[1] = Vector2(-1, 0);
+        directions[2] = Vector2(-1, -1);
+        directions[3] = Vector2(0, 1);
+        directions[4] = Vector2(0, -1);
+        directions[5] = Vector2(1, 1);
+        directions[6] = Vector2(1, 0);
+        directions[7] = Vector2(1, -1);
+    }
+    std::vector<float> aStar() {
+        Node startNode(startPos);
+        Node goalNode(Vector2(endPos.getX(), endPos.getY()));
+
+        if (map.getIfInDanger(startNode.position) || map.getIfInDanger(goalNode.position)) {
+            std::cout << "Either the start of this map is obstructed or so is the end.";
+            std::vector<float> a;
+            a.push_back(0);
+            return a;
+        }
+
+        std::list<Node> openList;
+        std::list<Node> closedList;
+
+        startNode.calc(endPos, map);
+        openList.push_back(startNode);
+
+        while (!openList.empty()) {
+            auto current = Node(*std::min_element(openList.begin(), openList.end()));
+
+            current.calc(endPos, map);
+
+            closedList.push_back(current);
+            openList.remove(current);
+            if (current == goalNode) break;
+
+            for (auto& direction : directions) {
+                Node successor(direction + current.position);
+
+                if (map.getIfInDanger(successor.position) || successor.position.getX() > col - 1 ||
+                    successor.position.getY() > row - 1 || successor.position.getX() < 0 ||
+                    successor.position.getY() < 0 ||
+                    std::find(closedList.begin(), closedList.end(), successor) != closedList.end()) {
+                    continue;
+                }
+
+                successor.calc(endPos, map);
+
+                auto inOpen = std::find(openList.begin(), openList.end(), successor);
+                if (inOpen == openList.end()) {
+                    successor.parent = &closedList.back();
+                    successor.calc(endPos, map);
+
+                    openList.push_back(successor);
+                }
+                else
+                    if (successor.G < inOpen->G) successor.parent = &closedList.back();
             }
-    }
-}
+        }
 
-Astar::Astar()
-{
+        if (!openList.size()) {
+            std::cout << "No path has been found\n";
+            std::vector<float> a;
+            a.push_back(0);
+            return a;
+        }
 
-}
-Astar::~Astar()
-{
+        auto inClosed = std::find(closedList.begin(), closedList.end(), goalNode);
+        if (inClosed != closedList.end()) {
+            while (*inClosed != startNode) {
+                map.setElement(2, inClosed->position); //путь - это двойка
+                //qDebug() << inClosed->position.getX() << inClosed->position.getY();
 
-}
+                QGraphicsEllipseItem* point = new QGraphicsEllipseItem(0, 0, 0.5, 0.5);
+                point->setPos(inClosed->position.getX(), inClosed->position.getY());
+                point->setBrush(Qt::red);
+                view->scene()->addItem(point);
 
-void Astar::search(Node* startPos, Node* endPos)
-{
-    if (startPos->x < 0 || startPos->x > row || startPos->y < 0 || startPos->y >col ||
-        endPos->x < 0 || endPos->x > row || endPos->y < 0 || endPos->y > col)
-    {
-        return;
-    }
-
-    Node* current;
-
-    this->startPos = startPos;
-    this->endPos = endPos;
-
-    openList.push_back(startPos);
-
-    while (openList.size() > 0)
-    {
-            current = openList[0];
-            if (current->x == endPos->x && current->y == endPos->y)
-            {
-                    // DRAW the WAY (SAVVA and VANYA)
-                    qDebug() << "HUI";
-                    openList.clear();
-                    closeList.clear();
-                    break;
+                *inClosed = *inClosed->parent;
             }
-            NextStep(current);
-            closeList.push_back(current);
-            openList.erase(openList.begin());
-            sort(openList.begin(), openList.end(), compare);
+        }
+
+        map.display();
+        return map.data;
     }
-}
+};
 
-
-void Astar::checkPoit(int x, int y, Node* father, int g)
+void MainWindow::on_way_but_clicked()
 {
-    if (x < 0 || x > row || y < 0 || y > col)
-    {
-        return;
-    }
-    if (this->unWalk(x, y))
-    {
-        return;
-    }
-    if (isContains(&closeList, x, y) != -1)
-    {
-        return;
-    }
-    int index;
-    if ((index = isContains(&openList, x, y)) != -1)
-    {
-            Node *point = openList[index];
-            if (point->g > father->g + g)
-            {
-                    point->father = father;
-                    point->g = father->g + g;
-                    point->f = point->g + point->h;
-            }
-    }
-    else
-    {
-            Node * point = new Node(x, y, father);
-            countGHF(point, endPos, g * Matrix[x][y]);
-            openList.push_back(point);
-    }
-}
+    //Обрабатываем кнопку "Построить маршрут"
+    if (!add_but_is_clicked){
+        if (view->start!=nullptr && view->finish!=nullptr){
+            turn_off_flags();
+            way_but_is_clicked = true;
+
+            //Удаляем предыдущий маршрут
+            for (QGraphicsItem *item : view->scene()->items()) {
+                     if (item->type() == QGraphicsEllipseItem::Type) {
+                            view->scene()->removeItem(item);
+                     }
+             }
+
+            int x=view->start->pos().x()+12, y=view->start->pos().y()+22;
+            Solver solve(Vector2(x-1, y-1), Vector2(view->finish->pos().x()+11, view->finish->pos().y()+21), row*col);
+            std::vector<float> vec = solve.aStar();
 
 
-
-void Astar::NextStep(Node* current)
-{
-    checkPoit(current->x-1, current->y, current, WeightW);          //Left
-    checkPoit(current->x + 1, current->y, current, WeightW);        //right
-    checkPoit(current->x, current->y + 1, current, WeightW);        //up
-    checkPoit(current->x, current->y-1, current, WeightW);          //down
-    checkPoit(current->x-1, current->y + 1, current, WeightWH);     //top left
-    checkPoit(current->x-1, current->y-1, current, WeightWH);       //bottom left
-    checkPoit(current->x + 1, current->y-1, current, WeightWH);     //bottom right
-    checkPoit(current->x + 1, current->y + 1, current, WeightWH);   //top right
-}
-
-
-
-
-int Astar::isContains(vector<Node*>* Nodelist, int x, int y)
-{
-    for (int i = 0; i < Nodelist->size(); i++)
-    {
-            if (Nodelist->at(i)->x == x && Nodelist->at(i)->y == y)
-            {
-                    return i;
-            }
-    }
-    return -1;
-}
-
-
-
-void Astar::countGHF(Node* sNode, Node* eNode, int g)
-{
-    int h = (abs(sNode->x - eNode->x) + abs(sNode->y - eNode->y)) * WeightW;
-    int currentg = sNode->father->g * Matrix[sNode->father->x][sNode->father->y] + g;
-    int f = currentg + h;
-    sNode->f = f;
-    sNode->h = h;
-    sNode->g = currentg;
-}
-
-
-// f comparison
-bool Astar::compare(Node* n1, Node* n2)
-{
-    return n1->f < n2->f;
-}
-
-
-bool Astar::unWalk(int x, int y)
-{
-    if (Matrix[x][y] != 1000)
-    {
-        return true;
-    }
-
-    else
-    {
-        return false;
+            qDebug() << "Ok";
+        }
+        else{
+            QMessageBox::critical(this, tr("Ошибка"), tr("Для построения маршрута сначала необходимо задать начальную и конечные точки!"));
+        }
     }
 }
